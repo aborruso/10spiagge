@@ -1,0 +1,377 @@
+<!doctype><html><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Odyssey.js Slides</title>
+  <meta name="description" content="">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="icon" type="image/x-icon" href="http://cartodb.github.io/odyssey.js/sandbox/favicon.png">
+  <link rel="icon" type="image/png" href="http://cartodb.github.io/odyssey.js/sandbox/favicon.png">
+
+  <link rel="stylesheet" href="http://cartodb-libs.global.ssl.fastly.net/cartodb.js/v3/themes/css/cartodb.css">
+  <link rel="stylesheet" href="./css/slides.css">
+  <script src="http://cartodb.github.io/odyssey.js/vendor/modernizr-2.6.2.min.js"></script>
+</head>
+<body>
+  <div id="map" style="width: 100%; height: 100%;"></div>
+
+  <div id="slides_container" style="display:block;">
+    <div id="dots"></div>
+
+    <div id="slides"></div>
+
+    <ul id="navButtons">
+      <li><a class="prev"></a></li>
+      <li><a class="next"></a></li>
+    </ul>
+  </div>
+
+  <div id="credits">
+    <span class="title" id="title">Title</span>
+    <span class="author"><strong id="author">By Name using</strong> <a href="http://cartodb.github.io/odyssey.js/">Odyssey.js</a><span>
+  </span></span></div>
+
+  <script src="http://cartodb-libs.global.ssl.fastly.net/cartodb.js/v3/cartodb.js"></script>
+  <script src="http://cartodb.github.io/odyssey.js/dist/odyssey.js" charset="UTF-8"></script>
+
+  <script>
+    var resizePID;
+
+    function clearResize() {
+      clearTimeout(resizePID);
+      resizePID = setTimeout(function() { adjustSlides(); }, 100);
+    }
+
+    if (!window.addEventListener) {
+      window.attachEvent("resize", function load(event) {
+        clearResize();
+      });
+    } else {
+      window.addEventListener("resize", function load(event) {
+        clearResize();
+      });
+    }
+
+    function adjustSlides() {
+      var container = document.getElementById("slides_container"),
+          slide = document.querySelectorAll('.selected_slide')[0];
+
+      if (slide) {
+        if (slide.offsetHeight+169+40+80 >= window.innerHeight) {
+          container.style.bottom = "80px";
+
+          var h = container.offsetHeight;
+
+          slide.style.height = h-169+"px";
+          slide.classList.add("scrolled");
+        } else {
+          container.style.bottom = "auto";
+          container.style.minHeight = "0";
+
+          slide.style.height = "auto";
+          slide.classList.remove("scrolled");
+        }
+      }
+    }
+
+    var resizeAction = O.Action(function() {
+      function imageLoaded() {
+        counter--;
+
+        if (counter === 0) {
+          adjustSlides();
+        }
+      }
+      var images = $('img');
+      var counter = images.length;
+
+      images.each(function() {
+        if (this.complete) {
+          imageLoaded.call( this );
+        } else {
+          $(this).one('load', imageLoaded);
+        }
+      });
+    });
+
+    function click(el) {
+      var element = O.Core.getElement(el);
+      var t = O.Trigger();
+
+      // TODO: clean properly
+      function click() {
+        t.trigger();
+      }
+
+      if (element) element.onclick = click;
+
+      return t;
+    }
+
+    O.Template({
+      init: function() {
+        var seq = O.Triggers.Sequential();
+
+        var baseurl = this.baseurl = 'https://a.tiles.mapbox.com/v4/aborruso.ilc3l20e/{z}/{x}/{y}.png?access_token=pk.eyJ1IjoiYWJvcnJ1c28iLCJhIjoibFpOMXpEZyJ9.HNHxWxDvvFz5i2mgMEll7Q';
+        var map = this.map = L.map('map').setView([0, 0.0], 4);
+        var basemap = this.basemap = L.tileLayer(baseurl, {
+          attribution: 'data OSM - map CartoDB'
+        }).addTo(map);
+
+        // enanle keys to move
+        O.Keys().on('map').left().then(seq.prev, seq)
+        O.Keys().on('map').right().then(seq.next, seq)
+
+        click(document.querySelectorAll('.next')).then(seq.next, seq)
+        click(document.querySelectorAll('.prev')).then(seq.prev, seq)
+
+        var slides = O.Actions.Slides('slides');
+        var story = O.Story()
+
+        this.story = story;
+        this.seq = seq;
+        this.slides = slides;
+        this.progress = O.UI.DotProgress('dots').count(0);
+      },
+
+      update: function(actions) {
+        var self = this;
+
+        if (!actions.length) return;
+
+        this.story.clear();
+
+        if (this.baseurl && (this.baseurl !== actions.global.baseurl)) {
+          this.baseurl = actions.global.baseurl || 'http://0.api.cartocdn.com/base-light/{z}/{x}/{y}.png';
+
+          this.basemap.setUrl(this.baseurl);
+        }
+
+        if (this.cartoDBLayer && ("http://"+self.cartoDBLayer.options.user_name+".cartodb.com/api/v2/viz/"+self.cartoDBLayer.options.layer_definition.stat_tag+"/viz.json" !== actions.global.vizjson)) {
+          this.map.removeLayer(this.cartoDBLayer);
+
+          this.cartoDBLayer = null;
+          this.created = false;
+        }
+
+        if (actions.global.vizjson && !this.cartoDBLayer) {
+          if (!this.created) { // sendCode debounce < vis loader
+            cdb.vis.Loader.get(actions.global.vizjson, function(vizjson) {
+              self.map.fitBounds(vizjson.bounds);
+
+              cartodb.createLayer(self.map, vizjson)
+                .done(function(layer) {
+                  self.cartoDBLayer = layer;
+
+                  var sublayer = layer.getSubLayer(0),
+                      layer_name = layer.layers[0].options.layer_name,
+                      filter = actions.global.cartodb_filter ? " WHERE "+actions.global.cartodb_filter : "";
+
+                  sublayer.setSQL("SELECT * FROM "+layer_name+filter)
+
+                  self.map.addLayer(layer);
+
+                  self._resetActions(actions);
+                }).on('error', function(err) {
+                  console.log("some error occurred: " + err);
+                });
+            });
+
+            this.created = true;
+          }
+
+          return;
+        }
+
+        this._resetActions(actions);
+      },
+
+      _resetActions: function(actions) {
+        // update footer title and author
+        var title_ = actions.global.title === undefined ? '' : actions.global.title,
+            author_ = actions.global.author === undefined ? 'Using' : 'By '+actions.global.author+' using';
+
+        document.getElementById('title').innerHTML = title_;
+        document.getElementById('author').innerHTML = author_;
+        document.title = title_ + " | " + author_ +' Odyssey.js';
+
+        var sl = actions;
+
+        document.getElementById('slides').innerHTML = ''
+        this.progress.count(sl.length);
+
+        // create new story
+        for(var i = 0; i < sl.length; ++i) {
+          var slide = sl[i];
+          var tmpl = "<div class='slide' style='diplay:none'>";
+
+          tmpl += slide.html();
+          tmpl += "</div>";
+          document.getElementById('slides').innerHTML += tmpl;
+
+          this.progress.step(i).then(this.seq.step(i), this.seq)
+
+          var actions = O.Parallel(
+            this.slides.activate(i),
+            slide(this),
+            this.progress.activate(i),
+            resizeAction
+          );
+
+          actions.on("finish.app", function() {
+            adjustSlides();
+          });
+
+          this.story.addState(
+            this.seq.step(i),
+            actions
+          )
+        }
+
+        this.story.go(this.seq.current());
+      },
+
+      changeSlide: function(n) {
+        this.seq.current(n);
+      }
+    });
+  </script>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+    ga('create', 'UA-20934186-21', 'cartodb.github.io');
+    ga('send', 'pageview');
+  </script>
+
+
+<script id="md_template" type="text/template">```
+-baseurl: "https://a.tiles.mapbox.com/v4/aborruso.ilc3l20e/{z}/{x}/{y}.png?access_token=pk.eyJ1IjoiYWJvcnJ1c28iLCJhIjoibFpOMXpEZyJ9.HNHxWxDvvFz5i2mgMEll7Q"
+-title: "10 spiagge da vedere in Sicilia"
+-author: "Andrea Borruso"
+```
+#10 spiagge da vedere in Sicilia
+```
+- center: [37.5511, 13.5022]
+- zoom: 8
+```
+La **Sicilia** è una terra fantastica. A seguire una carrellata di **10 fantastiche spiagge**, costruita con [Odyssey.js](http://cartodb.github.io/odyssey.js/).
+
+Tratto da [siciliafan] (http://m.siciliafan.it/classifica-10-spiagge-da-vedere-in-sicilia/)
+
+
+#CALA MOSCHE
+```
+- center: [36.824655, 15.106255]
+- zoom: 9
+L.marker([36.824655, 15.106255]).actions.addRemove(S.map)
+```
+![CALA MOSCHE](http://www.siciliafan.it/wp-content/uploads/2014/06/calamosche.jpg?7f9bf5)
+
+Al primo posto, immersa nella riserva di Vendicari a Noto (Sr) troviamo incontaminata ed in tutto il suo splendore, Cala Mosche. Situata nella parte Orientale della Sicilia, è un piccolo gioiello dai colori vivaci e dalle acque davvero limpide. Adatta per una gita fuori porta, per raggiungerla, è necessario camminare circa 20 minuti a piedi, quindi attenzione per chi si muove con i bambini.
+
+#Punta Secca
+```
+- center: [36.789059, 14.492555]
+- zoom: 10
+L.marker([36.789059, 14.492555]).actions.addRemove(S.map)
+```
+
+![Punta Secca](http://www.siciliafan.it/wp-content/uploads/2014/06/punta_secca.jpg?7f9bf5)
+
+La spiaggia di Punta Secca si trova a Ragusa, ed è la stessa che ospita una villa che i siciliani conoscono bene: "**la villa del commissario Montalbano**". La spiaggia di Punta secca non è diventata famosa nello scenario delle spiaggie siciliane da vedere, solo per la nota serie televisiva, ma bensì, per una spiaggia molto vasta e facilmente accessibile, così come per le acque davvero pulite.
+
+
+#ISOLA DELLE CORRENTI
+```
+- center: [36.645629, 15.077499]
+- zoom: 10
+L.marker([36.645629, 15.077499]).actions.addRemove(S.map)
+```
+
+![ISOLA DELLE CORRENTI](http://www.siciliafan.it/wp-content/uploads/2014/06/isola_delle_correnti.jpg?7f9bf5)
+
+L'Isola si trova a **Porto Palo di Capo Passero** ed è situata nella punta più a sud della Sicilia. Il nome deriva infatti dal punto di incontro fra le correnti che confluiscono nell’isola. La prima corrente del Mar Ionio, la seconda del Mar Mediterraneo. La spiaggia è molto amata da coloro che praticano il WindSurf, uno spettacolo da non perdere. 
+
+#SAN LORENZO
+```
+- center: [36.746673, 15.111144]
+- zoom: 10
+L.marker([36.746673, 15.111144]).actions.addRemove(S.map)
+```
+
+![SAN LORENZO](http://www.siciliafan.it/wp-content/uploads/2014/06/san_lorenzo.jpg?7f9bf5)
+
+Foto di [Luigi Nifosi](http://www.luiginifosi.it/)
+
+La bellissima spiaggia di San Lorenzo si trova nella piccola Marzamemi, una delle bellezze tipiche della Sicilia.  Situata nella costa Sud – Est della Sicilia, limpida e brillante aspetta turisti di tutto il mondo per trascorrere una estate piena di albe e tramonti unici. E’ possibile avvistare fenicotteri rosa, infatti a San Lorenzo, la natura è stata molto generosa. 
+
+#ISOLA BELLA
+```
+- center: [37.850316, 15.300726]
+- zoom: 10
+L.marker([37.850316, 15.300726]).actions.addRemove(S.map)
+```
+
+![ISOLA BELLA](http://www.siciliafan.it/wp-content/uploads/2014/06/133982341.jpg?7f9bf5)
+
+Situata a 7 chilometri da **Taormina**, è uno dei luoghi simbolo della Sicilia. Cielo limpido e acqua blu. Qui è possibile concedersi un weekend di lusso, in una Sicilia ricca di attività ricettive di buon gusto. Lo scoglio che si vede in foto è possibile raggiungerlo a nuoto così come a piedi. La vegetazione è ricca e folta.
+
+#RISERVA NATURALE DELLO ZINGARO
+```
+- center: [38.087694, 12.804896]
+- zoom: 10
+L.marker([38.087694, 12.804896]).actions.addRemove(S.map)
+```
+
+![RISERVA NATURALE DELLO ZINGARO](http://www.siciliafan.it/wp-content/uploads/2014/06/cala_riserva_dello_zingaro.jpg?7f9bf5)
+
+Ci siamo spostati nella parte occidentale della Sicilia per apprezzare tutte le bellezze della diverse calette che si susseguono nei pressi della famosa riserva dello Zingaro. Le cale da Castellammare del Golfo a San Vito lo Capo sono ben  7, ognuna raggiungibile anche via mare, muniti di  piccole barchette turistiche. Obbligatorie le maschere e le pinne, foondali bellissimi. 
+
+#SPIAGGIA DI SAN VITO LO CAPO
+```
+- center: [38.1782, 12.7335]
+- zoom: 10
+L.marker([38.1782, 12.7335]).actions.addRemove(S.map)
+```
+
+![SPIAGGIA DI SAN VITO LO CAPO](http://www.siciliafan.it/wp-content/uploads/2014/06/san_vito_lo_capo2.jpg?7f9bf5)
+
+Non poteva di certo mancare la famosa spiaggia di San Vito Lo Capo, con quella sabbia bianca e quel mare cristallino che sembra quasi essere ai Caraibi. Ottima la località turistica, dove è possibile mangiare anche dell’ottimo pesce e il tanto rinomato Cous Cous trapanese, un piatto tradizionale arabo e presto entrato anche nel culto della cucina tipica della zona. 
+
+#SCOPELLO
+```
+- center: [38.055489, 12.842710]
+- zoom: 10	
+L.marker([38.055489, 12.842710]).actions.addRemove(S.map)
+```
+
+![SCOPELLO](http://www.siciliafan.it/wp-content/uploads/2014/06/scopello.jpg?7f9bf5)
+
+La spiaggia di Scopello con la sua particolare casetta privata e con i suoi faraglioni, è un incanto tutto siciliano. Il borgo di Scopello dà accesso a quella che è una zona dove il tempo sembra essersi fermato. Fare un tuffo nelle acque blu è come rivivere attimi di una Sicilia incontaminata. Un vero toccasana per chi vuole allontanarsi dal coas delle città e trovare un piccolo angolo di paradiso. 
+
+#LE SALINE DI MARSALA
+```
+- center: [37.862743, 12.483503]
+- zoom: 10
+L.marker([37.862743, 12.483503]).actions.addRemove(S.map)
+```
+
+![LE SALINE DI MARSALA](http://www.siciliafan.it/wp-content/uploads/2014/06/saline.jpg?7f9bf5)
+
+Le **Saline di Marsala e la laguna dello Stagnone** sono una tappa fondamentale e unica in Sicilia. Le montagne di sale ed i mulini fanno da scenario ad un ambiente quasi surreale dove, il tutto, lascia il segno di una Sicilia ricca di cultura e di tradizione. Nei pressi della riserva, è possibile scoprire spiagge incantate come quelle di Mazara del Vallo, dalle acque cristalline e dai servizi impeccabili. Poi per chi non si accontenta del mare e delle spiagge è ancora possibile effettuare **viaggi eno – gastonomici**, in alcune delle cantine più pregiate della Sicilia.  
+
+#LA SCALA DEI TURCHI
+```
+- center: [37.290236, 13.472458]
+- zoom: 10
+L.marker([37.290236, 13.472458]).actions.addRemove(S.map)
+```
+
+![LA SCALA DEI TURCHI](http://www.siciliafan.it/wp-content/uploads/2014/06/scala_dei_turchi_1_1902395490.jpg?7f9bf5)
+
+In chiusura e sperando di aver mostrato davvero le 10 spiagge da vedere in Sicilia, non poteva di certo mancare la Scala dei Turchi a Realmonte. Nei pressi di Agrigento, è infatti possibile scorgere una imponente roccia bianca a strapiombo sul mare, dove e possibile prendere il sole, attraverso apposite panchine naturali che si affacciano sul mare. L’abbronzatura ne risentirà del bianco splendente emanato dalla roccia e il momento di relax è assicurato. 
+</script></body></html>
